@@ -12,6 +12,9 @@ jobs:
     name: Build APK (EAS)
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +39,46 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Get APK download URL
-        run: eas build:list --platform android --limit 1 --json | jq '.[0].artifacts.buildUrl'
+      - name: Get APK URL
+        id: apk_url
+        run: |
+          URL=$(eas build:list --platform android --limit 1 --json | jq -r '.[0].artifacts.buildUrl')
+          echo "url=$URL" >> $GITHUB_OUTPUT
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Download APK
+        run: curl -L "${{ steps.apk_url.outputs.url }}" -o tremorlog.apk
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(jq -r '.expo.version' app.json)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "tag=v${VERSION}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "name=TremorLog v${VERSION} (${SHORT_SHA})" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.name }}
+          body: |
+            ## TremorLog Android APK
+
+            Built from commit ${{ github.sha }}
+
+            ### Install
+            1. Download `tremorlog.apk`
+            2. Enable "Install from unknown sources" on your Android device
+            3. Open the APK to install
+
+            ### What's in this build
+            - Accelerometer + gyroscope tremor capture (100Hz)
+            - Advanced signal analysis: regularity index, harmonic ratio, intermittency, cross-axis phase
+            - Tremor profile classification (Parkinson's-like / Essential / Physiological / Minimal)
+            - Live waveform display
+            - Session history + PDF report
+          files: tremorlog.apk
+          draft: false
+          prerelease: true
