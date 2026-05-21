@@ -26,6 +26,12 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1e9ffd82-b265-4f9b-a389-c2a981c57d01"
+      }
+    },
+    "owner": "srujanrai"
   }
 }
