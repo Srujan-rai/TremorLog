@@ -1,14 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
-import { CartesianChart, Line } from 'victory-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
 import { getAllSessions, deleteSession } from '../services/storage';
 import { TremorSession } from '../types/session';
+import TrendChart from '../components/TrendChart';
 
 interface Props {
   onBack: () => void;
@@ -18,18 +12,15 @@ export default function HistoryScreen({ onBack }: Props) {
   const [sessions, setSessions] = useState<TremorSession[]>([]);
 
   useEffect(() => {
-    setSessions(getAllSessions());
+    getAllSessions().then(setSessions);
   }, []);
 
-  function handleDelete(id: string) {
-    deleteSession(id);
-    setSessions(getAllSessions());
+  async function handleDelete(id: string) {
+    await deleteSession(id);
+    getAllSessions().then(setSessions);
   }
 
-  const chartData = [...sessions]
-    .reverse()
-    .slice(-30)
-    .map((s, i) => ({ x: i + 1, score: s.score }));
+  const chartScores = [...sessions].reverse().slice(-30).map((s) => s.score);
 
   if (sessions.length === 0) {
     return (
@@ -52,19 +43,8 @@ export default function HistoryScreen({ onBack }: Props) {
 
       <Text style={styles.heading}>History</Text>
 
-      {chartData.length > 1 && (
-        <View style={{ height: 200 }}>
-          <CartesianChart
-            data={chartData}
-            xKey="x"
-            yKeys={['score']}
-            domainPadding={{ top: 10 }}
-          >
-            {({ points }) => (
-              <Line points={points.score} color="#2e86c1" strokeWidth={2} />
-            )}
-          </CartesianChart>
-        </View>
+      {chartScores.length > 1 && (
+        <TrendChart scores={chartScores} width={340} height={160} />
       )}
 
       <FlatList
@@ -86,10 +66,7 @@ export default function HistoryScreen({ onBack }: Props) {
                   </Text>
                 )}
               </View>
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() => handleDelete(item.id)}
-              >
+              <TouchableOpacity style={styles.deleteButton} onPress={() => handleDelete(item.id)}>
                 <Text style={styles.deleteText}>Delete</Text>
               </TouchableOpacity>
             </View>
@@ -118,12 +95,6 @@ const styles = StyleSheet.create({
   rowDate: { fontSize: 18, color: '#333' },
   rowScore: { fontSize: 22, fontWeight: 'bold', color: '#1a5276' },
   rowDelta: { fontSize: 16 },
-  deleteButton: {
-    padding: 8,
-    minHeight: 48,
-    minWidth: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  deleteButton: { padding: 8, minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center' },
   deleteText: { fontSize: 16, color: '#e74c3c' },
 });

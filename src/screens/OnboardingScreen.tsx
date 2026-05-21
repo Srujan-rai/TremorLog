@@ -26,9 +26,9 @@ export default function OnboardingScreen({ onComplete }: Props) {
   const current = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
-  function handleNext() {
+  async function handleNext() {
     if (isLast) {
-      setOnboardingComplete();
+      await setOnboardingComplete();
       onComplete();
     } else {
       setStep(step + 1);

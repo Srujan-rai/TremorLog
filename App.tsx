@@ -13,7 +13,7 @@ import ResultScreen from './src/screens/ResultScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
 import ReportScreen from './src/screens/ReportScreen';
 
-type Screen = 'onboarding' | 'home' | 'capture' | 'result' | 'history' | 'report';
+type Screen = 'loading' | 'onboarding' | 'home' | 'capture' | 'result' | 'history' | 'report';
 
 interface CaptureResult {
   samples: SensorSample[];
@@ -24,26 +24,39 @@ interface CaptureResult {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('onboarding');
+  const [screen, setScreen] = useState<Screen>('loading');
   const [captureResult, setCaptureResult] = useState<CaptureResult | null>(null);
+  const [previousSession, setPreviousSession] = useState<TremorSession | null>(null);
 
   useEffect(() => {
-    if (isOnboardingComplete()) {
-      setScreen('home');
-    }
+    isOnboardingComplete()
+      .then((done) => {
+        setScreen(done ? 'home' : 'onboarding');
+      })
+      .catch(() => {
+        setScreen('onboarding');
+      });
   }, []);
 
-  function handleCaptureComplete(
+  async function handleCaptureComplete(
     samples: SensorSample[],
     analysis: SignalAnalysis,
     noiseFloor: number,
     durationMs: number
   ) {
+    const sessions = await getAllSessions();
+    setPreviousSession(sessions[0] ?? null);
     setCaptureResult({ samples, analysis, noiseFloor, durationMs, hand: 'right' });
     setScreen('result');
   }
 
-  const previousSession = getAllSessions()[0] ?? null;
+  if (screen === 'loading') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="dark" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

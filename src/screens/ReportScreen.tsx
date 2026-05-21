@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Alert } from 'react-native';
 import { getAllSessions } from '../services/storage';
 import { generateReport, shareReport } from '../services/pdf';
+import { TremorSession } from '../types/session';
 
 interface Props {
   onBack: () => void;
@@ -10,7 +11,11 @@ interface Props {
 export default function ReportScreen({ onBack }: Props) {
   const [patientName, setPatientName] = useState('');
   const [loading, setLoading] = useState(false);
-  const sessions = getAllSessions();
+  const [sessions, setSessions] = useState<TremorSession[]>([]);
+
+  useEffect(() => {
+    getAllSessions().then(setSessions);
+  }, []);
 
   async function handleGenerate() {
     if (sessions.length === 0) return;

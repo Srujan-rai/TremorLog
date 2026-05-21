@@ -8,9 +8,11 @@ import {
   AppStateStatus,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { Accelerometer } from 'expo-sensors';
 import { captureSamples, captureNoiseFloor, detectActualSampleRate } from '../services/sensor';
 import { analyzeSignal, SignalAnalysis } from '../services/signal';
 import { SensorSample } from '../services/sensor';
+import WaveformDisplay from '../components/WaveformDisplay';
 
 type Phase = 'calibrating' | 'countdown' | 'capturing' | 'done' | 'error';
 
@@ -26,11 +28,12 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
   const [phase, setPhase] = useState<Phase>('calibrating');
   const [countdown, setCountdown] = useState(COUNTDOWN_SEC);
   const [elapsed, setElapsed] = useState(0);
-  const [amplitude, setAmplitude] = useState(0);
+  const [waveformSamples, setWaveformSamples] = useState<number[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const abortedRef = useRef(false);
   const noiseFloorRef = useRef(0);
   const samplesRef = useRef<SensorSample[]>([]);
+  const waveformRef = useRef<number[]>([]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -76,19 +79,23 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
     setPhase('capturing');
     const startMs = Date.now();
 
+    // Live waveform listener runs in parallel
+    Accelerometer.setUpdateInterval(50); // ~20Hz for display
+    const waveformSub = Accelerometer.addListener(({ x, y, z }) => {
+      const mag = Math.sqrt(x * x + y * y + z * z) - noiseFloorRef.current;
+      const normalized = Math.min(Math.max(mag / 0.5, 0), 1);
+      waveformRef.current = [...waveformRef.current.slice(-149), normalized];
+      setWaveformSamples([...waveformRef.current]);
+    });
+
     try {
-      const actualHz = await detectActualSampleRate();
       const samples = await captureSamples((elapsedMs) => {
         if (abortedRef.current) return;
         setElapsed(elapsedMs);
-        // live amplitude from last sample
-        const last = samplesRef.current[samplesRef.current.length - 1];
-        if (last) {
-          const mag = Math.sqrt(last.x * last.x + last.y * last.y + last.z * last.z);
-          setAmplitude(Math.min((mag - noiseFloorRef.current) / 2, 1));
-        }
+        samplesRef.current = samples ?? [];
       });
 
+      waveformSub.remove();
       samplesRef.current = samples;
 
       const durationMs = Date.now() - startMs;
@@ -102,6 +109,7 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onComplete(samples, analysis, noiseFloorRef.current, durationMs);
     } catch (e: any) {
+      waveformSub.remove();
       if (!abortedRef.current) {
         setPhase('error');
         setErrorMsg(e?.message ?? 'Unknown error during capture.');
@@ -115,7 +123,9 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
   }
 
   const remainingSec = Math.ceil((30_000 - elapsed) / 1000);
-  const amplitudeColor = amplitude > 0.5 ? '#e74c3c' : amplitude > 0.2 ? '#f39c12' : '#27ae60';
+  const lastAmp = waveformSamples[waveformSamples.length - 1] ?? 0;
+  const stabilityLabel = lastAmp > 0.6 ? 'High movement' : lastAmp > 0.3 ? 'Some movement' : 'Very stable';
+  const stabilityColor = lastAmp > 0.6 ? '#e74c3c' : lastAmp > 0.3 ? '#f39c12' : '#27ae60';
 
   return (
     <View style={styles.container}>
@@ -137,16 +147,11 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
         <>
           <Text style={styles.instruction}>Hold still, keep your arm relaxed</Text>
           <Text style={styles.timer}>{remainingSec}s</Text>
-          <View style={styles.amplitudeBar}>
-            <View
-              style={[
-                styles.amplitudeFill,
-                { width: `${Math.round(amplitude * 100)}%`, backgroundColor: amplitudeColor },
-              ]}
-            />
-          </View>
-          <Text style={[styles.subtext, { color: amplitudeColor }]}>
-            {amplitude < 0.2 ? 'Very stable' : amplitude < 0.5 ? 'Some movement' : 'High movement'}
+
+          <WaveformDisplay samples={waveformSamples} width={320} height={100} />
+
+          <Text style={[styles.stabilityLabel, { color: stabilityColor }]}>
+            {stabilityLabel}
           </Text>
         </>
       )}
@@ -199,16 +204,9 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1a5276',
   },
-  amplitudeBar: {
-    width: '100%',
-    height: 32,
-    backgroundColor: '#eee',
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  amplitudeFill: {
-    height: '100%',
-    borderRadius: 16,
+  stabilityLabel: {
+    fontSize: 18,
+    fontWeight: '600',
   },
   button: {
     backgroundColor: '#2e86c1',
@@ -225,7 +223,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   abortButton: {
-    marginTop: 16,
+    marginTop: 8,
     padding: 16,
     minHeight: 48,
     minWidth: 48,
