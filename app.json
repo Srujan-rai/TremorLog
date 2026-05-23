@@ -22,7 +22,8 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.srujanrai.tremorlog"
+      "package": "com.srujanrai.tremorlog",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"

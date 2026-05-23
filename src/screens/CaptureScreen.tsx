@@ -2,17 +2,22 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
   AppState,
   AppStateStatus,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { Accelerometer } from 'expo-sensors';
-import { captureSamples, captureNoiseFloor, detectActualSampleRate } from '../services/sensor';
+import { captureSamples, captureNoiseFloor, SensorSample } from '../services/sensor';
 import { analyzeSignal, SignalAnalysis } from '../services/signal';
-import { SensorSample } from '../services/sensor';
 import WaveformDisplay from '../components/WaveformDisplay';
+import Screen from '../components/ui/Screen';
+import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
+import PhaseStepper, { CapturePhase } from '../components/ui/PhaseStepper';
+import ProgressRing from '../components/ui/ProgressRing';
+import { movementColor, movementLabel } from '../theme/scoreColors';
+import { colors, spacing, typography, radii } from '../theme/tokens';
 
 type Phase = 'calibrating' | 'countdown' | 'capturing' | 'done' | 'error';
 
@@ -23,16 +28,24 @@ interface Props {
 }
 
 const COUNTDOWN_SEC = 3;
+const CAPTURE_MS = 30_000;
+const CALIBRATION_MS = 5_000;
+const MAX_WAVEFORM_POINTS = 150;
+
+function toStepperPhase(phase: Phase): CapturePhase | null {
+  if (phase === 'calibrating' || phase === 'countdown' || phase === 'capturing') return phase;
+  return null;
+}
 
 export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
   const [phase, setPhase] = useState<Phase>('calibrating');
   const [countdown, setCountdown] = useState(COUNTDOWN_SEC);
   const [elapsed, setElapsed] = useState(0);
+  const [calibElapsed, setCalibElapsed] = useState(0);
   const [waveformSamples, setWaveformSamples] = useState<number[]>([]);
   const [errorMsg, setErrorMsg] = useState('');
   const abortedRef = useRef(false);
   const noiseFloorRef = useRef(0);
-  const samplesRef = useRef<SensorSample[]>([]);
   const waveformRef = useRef<number[]>([]);
 
   useEffect(() => {
@@ -43,33 +56,56 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
       }
     });
     return () => sub.remove();
-  }, []);
+  }, [onAbort]);
 
   useEffect(() => {
     runCalibration();
+    return () => {
+      abortedRef.current = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runCalibration() {
+    const startTs = Date.now();
+    const tick = setInterval(() => {
+      if (abortedRef.current) {
+        clearInterval(tick);
+        return;
+      }
+      const e = Date.now() - startTs;
+      setCalibElapsed(Math.min(e, CALIBRATION_MS));
+      if (e >= CALIBRATION_MS) clearInterval(tick);
+    }, 100);
+
     try {
       const noise = await captureNoiseFloor();
+      clearInterval(tick);
       noiseFloorRef.current = noise;
       if (abortedRef.current) return;
       setPhase('countdown');
       startCountdown();
     } catch {
-      setPhase('error');
-      setErrorMsg('Calibration failed. Try again.');
+      clearInterval(tick);
+      if (!abortedRef.current) {
+        setPhase('error');
+        setErrorMsg('Calibration failed. Try again.');
+      }
     }
   }
 
   function startCountdown() {
     let count = COUNTDOWN_SEC;
     const interval = setInterval(() => {
+      if (abortedRef.current) {
+        clearInterval(interval);
+        return;
+      }
       count -= 1;
       setCountdown(count);
       if (count <= 0) {
         clearInterval(interval);
-        if (!abortedRef.current) startCapture();
+        startCapture();
       }
     }, 1000);
   }
@@ -79,24 +115,19 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
     setPhase('capturing');
     const startMs = Date.now();
 
-    // Live waveform listener runs in parallel
-    Accelerometer.setUpdateInterval(50); // ~20Hz for display
-    const waveformSub = Accelerometer.addListener(({ x, y, z }) => {
-      const mag = Math.sqrt(x * x + y * y + z * z) - noiseFloorRef.current;
-      const normalized = Math.min(Math.max(mag / 0.5, 0), 1);
-      waveformRef.current = [...waveformRef.current.slice(-149), normalized];
-      setWaveformSamples([...waveformRef.current]);
-    });
-
     try {
-      const samples = await captureSamples((elapsedMs) => {
+      const samples = await captureSamples((progress) => {
         if (abortedRef.current) return;
-        setElapsed(elapsedMs);
-        samplesRef.current = samples ?? [];
-      });
+        setElapsed(progress.elapsed);
+        // throttle waveform updates to ~20Hz to avoid React thrashing at 100Hz
+        const next = [...waveformRef.current, progress.amplitude].slice(-MAX_WAVEFORM_POINTS);
+        waveformRef.current = next;
+        if (next.length % 5 === 0) {
+          setWaveformSamples(next);
+        }
+      }, noiseFloorRef.current);
 
-      waveformSub.remove();
-      samplesRef.current = samples;
+      if (abortedRef.current) return;
 
       const durationMs = Date.now() - startMs;
       if (durationMs < 10_000) {
@@ -109,7 +140,6 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       onComplete(samples, analysis, noiseFloorRef.current, durationMs);
     } catch (e: any) {
-      waveformSub.remove();
       if (!abortedRef.current) {
         setPhase('error');
         setErrorMsg(e?.message ?? 'Unknown error during capture.');
@@ -122,121 +152,166 @@ export default function CaptureScreen({ hand, onComplete, onAbort }: Props) {
     onAbort();
   }
 
-  const remainingSec = Math.ceil((30_000 - elapsed) / 1000);
+  const remainingSec = Math.ceil((CAPTURE_MS - elapsed) / 1000);
+  const progress = Math.min(elapsed / CAPTURE_MS, 1);
   const lastAmp = waveformSamples[waveformSamples.length - 1] ?? 0;
-  const stabilityLabel = lastAmp > 0.6 ? 'High movement' : lastAmp > 0.3 ? 'Some movement' : 'Very stable';
-  const stabilityColor = lastAmp > 0.6 ? '#e74c3c' : lastAmp > 0.3 ? '#f39c12' : '#27ae60';
+  const stabilityColor = movementColor(lastAmp);
+  const stepperPhase = toStepperPhase(phase);
 
   return (
-    <View style={styles.container}>
+    <Screen contentStyle={styles.screen}>
+      {stepperPhase && <PhaseStepper activePhase={stepperPhase} />}
+
       {phase === 'calibrating' && (
-        <>
+        <View style={styles.centerBlock}>
+          <View style={styles.iconBadge}>
+            <Ionicons name="phone-portrait-outline" size={40} color={colors.primary} />
+          </View>
           <Text style={styles.instruction}>Place phone on flat surface</Text>
-          <Text style={styles.subtext}>Measuring noise floor… (5 sec)</Text>
-        </>
+          <ProgressRing
+            progress={calibElapsed / CALIBRATION_MS}
+            label={`${Math.max(0, Math.ceil((CALIBRATION_MS - calibElapsed) / 1000))}`}
+            sublabel="seconds"
+            size={140}
+          />
+          <Text style={styles.subtext}>Measuring noise floor</Text>
+        </View>
       )}
 
       {phase === 'countdown' && (
-        <>
+        <View style={styles.centerBlock}>
           <Text style={styles.instruction}>Now hold phone in your {hand} hand</Text>
-          <Text style={styles.countdown}>{countdown}</Text>
-        </>
+          <View style={styles.countdownRing}>
+            <Text style={styles.countdown}>{countdown}</Text>
+          </View>
+          <Text style={styles.subtext}>Keep your arm relaxed and steady</Text>
+        </View>
       )}
 
       {phase === 'capturing' && (
-        <>
-          <Text style={styles.instruction}>Hold still, keep your arm relaxed</Text>
-          <Text style={styles.timer}>{remainingSec}s</Text>
-
-          <WaveformDisplay samples={waveformSamples} width={320} height={100} />
-
-          <Text style={[styles.stabilityLabel, { color: stabilityColor }]}>
-            {stabilityLabel}
-          </Text>
-        </>
+        <View style={styles.centerBlock}>
+          <Text style={styles.instruction}>Hold still</Text>
+          <ProgressRing
+            progress={progress}
+            label={`${remainingSec}`}
+            sublabel="seconds left"
+          />
+          <Card style={styles.waveCard}>
+            <WaveformDisplay samples={waveformSamples} width={300} height={100} />
+          </Card>
+          <View style={[styles.pill, { backgroundColor: stabilityColor + '22' }]}>
+            <Ionicons
+              name={lastAmp > 0.3 ? 'pulse' : 'checkmark-circle'}
+              size={18}
+              color={stabilityColor}
+              style={styles.pillIcon}
+            />
+            <Text style={[styles.pillText, { color: stabilityColor }]}>
+              {movementLabel(lastAmp)}
+            </Text>
+          </View>
+        </View>
       )}
 
       {phase === 'error' && (
-        <>
-          <Text style={styles.errorText}>{errorMsg}</Text>
-          <TouchableOpacity style={styles.button} onPress={onAbort}>
-            <Text style={styles.buttonText}>Go Back</Text>
-          </TouchableOpacity>
-        </>
+        <View style={styles.centerBlock}>
+          <Card style={styles.errorCard}>
+            <Ionicons name="alert-circle" size={48} color={colors.danger} />
+            <Text style={styles.errorText}>{errorMsg}</Text>
+          </Card>
+          <Button title="Go Back" onPress={onAbort} style={styles.errorButton} />
+        </View>
       )}
 
       {phase !== 'done' && phase !== 'error' && (
-        <TouchableOpacity style={styles.abortButton} onPress={handleAbort}>
-          <Text style={styles.abortText}>Abort</Text>
-        </TouchableOpacity>
+        <Button title="Abort" variant="destructive" onPress={handleAbort} style={styles.abort} />
       )}
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 32,
-    justifyContent: 'center',
+  screen: {
     alignItems: 'center',
-    backgroundColor: '#fff',
-    gap: 24,
+    justifyContent: 'flex-start',
+  },
+  centerBlock: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xl,
+    width: '100%',
+  },
+  iconBadge: {
+    width: 96,
+    height: 96,
+    borderRadius: radii.full,
+    backgroundColor: colors.primaryMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.primary + '40',
   },
   instruction: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#1a5276',
+    ...typography.heading,
     textAlign: 'center',
   },
   subtext: {
-    fontSize: 18,
-    color: '#555',
+    ...typography.caption,
+    fontSize: 17,
     textAlign: 'center',
+  },
+  spinner: {
+    marginTop: spacing.md,
+  },
+  countdownRing: {
+    width: 160,
+    height: 160,
+    borderRadius: radii.full,
+    borderWidth: 8,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
   },
   countdown: {
     fontSize: 80,
-    fontWeight: 'bold',
-    color: '#2e86c1',
+    fontWeight: '700',
+    color: colors.primary,
   },
-  timer: {
-    fontSize: 64,
-    fontWeight: 'bold',
-    color: '#1a5276',
+  waveCard: {
+    width: '100%',
+    padding: spacing.md,
   },
-  stabilityLabel: {
-    fontSize: 18,
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.full,
+    gap: spacing.xs,
+  },
+  pillIcon: {
+    marginRight: spacing.xs,
+  },
+  pillText: {
+    fontSize: 17,
     fontWeight: '600',
   },
-  button: {
-    backgroundColor: '#2e86c1',
-    padding: 20,
-    borderRadius: 12,
-    minWidth: 200,
+  errorCard: {
     alignItems: 'center',
-    minHeight: 64,
-    justifyContent: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  abortButton: {
-    marginTop: 8,
-    padding: 16,
-    minHeight: 48,
-    minWidth: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  abortText: {
-    fontSize: 18,
-    color: '#e74c3c',
+    gap: spacing.md,
+    width: '100%',
   },
   errorText: {
-    fontSize: 20,
-    color: '#e74c3c',
+    fontSize: 18,
+    color: colors.danger,
     textAlign: 'center',
+  },
+  errorButton: {
+    width: '100%',
+  },
+  abort: {
+    marginTop: spacing.md,
   },
 });

@@ -195,6 +195,96 @@ function dominantTremorAxis(
   return 'Z';
 }
 
+// ─── 7. Spectral Entropy ──────────────────────────────────────────────────────
+// Shannon entropy of normalized power spectrum in 2–12Hz band.
+// Pure sinusoid (Parkinson's) → low entropy (< 0.5)
+// White noise / irregular signal → high entropy (> 0.8)
+
+function spectralEntropy(mags: number[], n: number): number {
+  const lo = binForFreq(LOW_CUT_HZ, n);
+  const hi = Math.min(binForFreq(HIGH_CUT_HZ, n), mags.length);
+  let totalPower = 0;
+  const power: number[] = [];
+  for (let i = lo; i < hi; i++) {
+    const p = mags[i] * mags[i];
+    power.push(p);
+    totalPower += p;
+  }
+  if (totalPower < 1e-12) return 0;
+  let H = 0;
+  for (const p of power) {
+    const norm = p / totalPower;
+    if (norm > 0) H -= norm * Math.log2(norm);
+  }
+  // Normalize to [0, 1] using max entropy log2(bins)
+  const maxH = Math.log2(power.length);
+  return maxH > 0 ? H / maxH : 0;
+}
+
+// ─── 8. Tremor Band Power Ratio ───────────────────────────────────────────────
+// Energy in 4–6Hz (Parkinson's band) / total energy in 2–12Hz
+// Parkinson's: high concentration (> 0.4)
+// Essential / physiological: distributed across band (< 0.25)
+
+function tremorBandPowerRatio(mags: number[], n: number): number {
+  const lo = binForFreq(LOW_CUT_HZ, n);
+  const hi = Math.min(binForFreq(HIGH_CUT_HZ, n), mags.length);
+  const pkLo = binForFreq(PARKINSONS_FREQ_MIN, n);
+  const pkHi = Math.min(binForFreq(PARKINSONS_FREQ_MAX, n), mags.length);
+
+  let totalPower = 0;
+  let parkPower = 0;
+  for (let i = lo; i < hi; i++) {
+    const p = mags[i] * mags[i];
+    totalPower += p;
+    if (i >= pkLo && i <= pkHi) parkPower += p;
+  }
+  return totalPower > 0 ? parkPower / totalPower : 0;
+}
+
+// ─── 9. Frequency Jitter (windowed FFT) ──────────────────────────────────────
+// Variance of dominant frequency across overlapping 4s windows.
+// Parkinson's: highly stable frequency → low jitter (< 0.3 Hz)
+// Cerebellar / irregular: drifts → high jitter (> 1 Hz)
+
+function frequencyJitter(filtered: number[]): number {
+  const windowSize = 4 * SAMPLE_RATE; // 4 seconds
+  const hop = SAMPLE_RATE * 2;        // 2-second hop (50% overlap)
+  if (filtered.length < windowSize) return 0;
+
+  const freqs: number[] = [];
+  for (let start = 0; start + windowSize <= filtered.length; start += hop) {
+    const window = filtered.slice(start, start + windowSize);
+    const { magnitudes, n } = runFFT(window);
+    freqs.push(findDominantFreq(magnitudes, n));
+  }
+  if (freqs.length < 2) return 0;
+  const mean = freqs.reduce((a, b) => a + b, 0) / freqs.length;
+  const variance = freqs.reduce((s, f) => s + (f - mean) ** 2, 0) / freqs.length;
+  return Math.sqrt(variance); // standard deviation in Hz
+}
+
+// ─── 10. Spectral Peak Q-factor ──────────────────────────────────────────────
+// Sharpness of dominant peak: f0 / bandwidth at half-max.
+// Parkinson's: very sharp peak → high Q (> 5)
+// Essential / cerebellar: broad peak → low Q (< 2)
+
+function peakQFactor(mags: number[], domFreqHz: number, n: number): number {
+  const f0bin = binForFreq(domFreqHz, n);
+  if (f0bin <= 0 || f0bin >= mags.length) return 0;
+  const peak = mags[f0bin];
+  if (peak < 1e-12) return 0;
+  const halfMax = peak / Math.sqrt(2);
+
+  let left = f0bin;
+  while (left > 0 && mags[left] > halfMax) left--;
+  let right = f0bin;
+  while (right < mags.length - 1 && mags[right] > halfMax) right++;
+
+  const bandwidth = freqForBin(right - left, n);
+  return bandwidth > 0 ? Math.round((domFreqHz / bandwidth) * 100) / 100 : 0;
+}
+
 // ─── Tremor Profile Classification ───────────────────────────────────────────
 
 export type TremorProfile =
@@ -209,28 +299,37 @@ function classifyProfile(
   regularity: number,
   harmRatio: number,
   intermittency: number,
-  phaseOffsetDeg: number
+  phaseOffsetDeg: number,
+  spectralEntropyVal: number,
+  bandPowerRatioVal: number,
+  freqJitterHz: number,
+  qFactor: number,
 ): TremorProfile {
   const inParkRange = domFreqHz >= PARKINSONS_FREQ_MIN && domFreqHz <= PARKINSONS_FREQ_MAX;
   const pillRolling = phaseOffsetDeg >= 60 && phaseOffsetDeg <= 120;
 
   if (amplitudeNorm < 0.1) return 'minimal';
 
-  if (
-    inParkRange &&
-    regularity > 0.65 &&
-    harmRatio > 1.2 &&
-    intermittency > 0.4 &&
-    pillRolling
-  ) return 'parkinsons-likely';
+  // Weighted Parkinson's score from multiple features (each 0–1)
+  let parkScore = 0;
+  if (inParkRange) parkScore += 0.25;
+  if (regularity > 0.65) parkScore += 0.15;
+  if (harmRatio > 1.2) parkScore += 0.10;
+  if (intermittency > 0.4) parkScore += 0.10;
+  if (pillRolling) parkScore += 0.10;
+  if (bandPowerRatioVal > 0.4) parkScore += 0.10;
+  if (spectralEntropyVal < 0.55) parkScore += 0.10;
+  if (qFactor > 4) parkScore += 0.05;
+  if (freqJitterHz < 0.5) parkScore += 0.05;
 
-  if (
-    inParkRange &&
-    regularity > 0.55 &&
-    (harmRatio > 1.0 || intermittency > 0.35)
-  ) return 'parkinsons-likely';
+  if (parkScore >= 0.55) return 'parkinsons-likely';
 
-  if (amplitudeNorm > 0.15 && regularity > 0.45) return 'essential-likely';
+  // Essential: significant amplitude, moderate regularity, broader spectrum
+  if (
+    amplitudeNorm > 0.15 &&
+    regularity > 0.45 &&
+    spectralEntropyVal > 0.55
+  ) return 'essential-likely';
 
   return 'physiological';
 }
@@ -251,6 +350,11 @@ export interface SignalAnalysis {
   phaseOffsetDeg: number;
   dominantAxis: 'X' | 'Y' | 'Z';
   tremorProfile: TremorProfile;
+  // Innovation: deep spectral features
+  spectralEntropy: number;     // 0–1, low = pure tone
+  bandPowerRatio: number;      // 0–1, energy concentrated in Parkinson's band
+  frequencyJitterHz: number;   // std dev of windowed dominant freq
+  peakQFactor: number;         // f0/bandwidth, peak sharpness
 }
 
 export function analyzeSignal(
@@ -293,15 +397,33 @@ export function analyzeSignal(
   const intermit = tremorIntermittency(filteredMag);
   const phaseOff = crossAxisPhase(filteredX, filteredY, domFreqHz);
   const domAxis = dominantTremorAxis(filteredX, filteredY, filteredZ);
+  const specEntropy = spectralEntropy(fftMags, n);
+  const bandRatio = tremorBandPowerRatio(fftMags, n);
+  const freqJitter = frequencyJitter(filteredMag);
+  const qFactor = peakQFactor(fftMags, domFreqHz, n);
 
   const freqInRange = domFreqHz >= PARKINSONS_FREQ_MIN && domFreqHz <= PARKINSONS_FREQ_MAX;
-  const profile = classifyProfile(domFreqHz, fusedAmplitude, regIdx, harmRatio, intermit, phaseOff);
+  const profile = classifyProfile(
+    domFreqHz, fusedAmplitude, regIdx, harmRatio, intermit, phaseOff,
+    specEntropy, bandRatio, freqJitter, qFactor,
+  );
 
-  // Score: amplitude (65pts) + freq penalty (20pts) + regularity penalty (15pts)
-  const amplitudePenalty = fusedAmplitude * 65;
-  const freqPenalty = freqInRange ? 20 : 0;
-  const regularityPenalty = regIdx > 0.7 && freqInRange ? 15 : 0;
-  const score = Math.max(0, Math.min(100, Math.round(100 - amplitudePenalty - freqPenalty - regularityPenalty)));
+  // Score (max 100). Penalties:
+  //  - Amplitude (up to 50)
+  //  - Freq in Parkinson's band (15)
+  //  - High regularity in band (10)
+  //  - High band power ratio (10)
+  //  - Sharp peak / high Q (10)
+  //  - Low spectral entropy (5)
+  const amplitudePenalty = fusedAmplitude * 50;
+  const freqPenalty = freqInRange ? 15 : 0;
+  const regularityPenalty = regIdx > 0.7 && freqInRange ? 10 : 0;
+  const bandPenalty = bandRatio > 0.4 ? 10 : 0;
+  const qPenalty = qFactor > 5 ? 10 : qFactor > 3 ? 5 : 0;
+  const entropyPenalty = specEntropy < 0.5 && freqInRange ? 5 : 0;
+  const score = Math.max(0, Math.min(100, Math.round(
+    100 - amplitudePenalty - freqPenalty - regularityPenalty - bandPenalty - qPenalty - entropyPenalty
+  )));
 
   return {
     dominantFreqHz: Math.round(domFreqHz * 10) / 10,
@@ -315,5 +437,9 @@ export function analyzeSignal(
     phaseOffsetDeg: phaseOff,
     dominantAxis: domAxis,
     tremorProfile: profile,
+    spectralEntropy: Math.round(specEntropy * 100) / 100,
+    bandPowerRatio: Math.round(bandRatio * 100) / 100,
+    frequencyJitterHz: Math.round(freqJitter * 100) / 100,
+    peakQFactor: qFactor,
   };
 }

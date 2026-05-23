@@ -28,11 +28,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::Add EXPO_TOKEN to GitHub repo secrets. Create at https://expo.dev/accounts/settings#access-tokens"
+            exit 1
+          fi
+
       - name: Setup EAS
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Link EAS project (non-interactive)
+        run: eas init --id 1e9ffd82-b265-4f9b-a389-c2a981c57d01 --non-interactive --force
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build APK (preview)
         run: eas build --platform android --profile preview --non-interactive

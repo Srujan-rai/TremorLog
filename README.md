@@ -164,12 +164,21 @@ Scan the QR code with Expo Go. If QR doesn't appear, open Expo Go → "Enter URL
 
 ### Build (Android APK)
 
+**Local:**
+
 ```bash
 npm install -g eas-cli
 eas login
-eas build:configure
 eas build --platform android --profile preview
 ```
+
+**GitHub Actions (CI):** The workflow in `.github/workflows/build.yml` runs on every push to `main`. Add a repository secret:
+
+1. Create an access token at [expo.dev/accounts/settings#access-tokens](https://expo.dev/accounts/settings#access-tokens)
+2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**
+3. Name: `EXPO_TOKEN`, value: your token
+
+The workflow links project `1e9ffd82-b265-4f9b-a389-c2a981c57d01` and builds the `preview` APK profile.
 
 ---
 

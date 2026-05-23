@@ -1,9 +1,18 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { TremorSession } from '../types/session';
 import { saveSession } from '../services/storage';
 import { SignalAnalysis } from '../services/signal';
 import * as Device from 'expo-device';
+import Screen from '../components/ui/Screen';
+import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
+import ProgressRing from '../components/ui/ProgressRing';
+import MetricRow from '../components/MetricRow';
+import ProgressBar from '../components/ProgressBar';
+import { scoreColor, deltaColor } from '../theme/scoreColors';
+import { colors, spacing, radii, typography } from '../theme/tokens';
 
 interface Props {
   analysis: SignalAnalysis;
@@ -15,32 +24,14 @@ interface Props {
   onDiscard: () => void;
 }
 
-const PROFILE_LABELS: Record<string, { label: string; color: string }> = {
-  'parkinsons-likely': { label: 'Parkinson\'s-like pattern', color: '#e74c3c' },
-  'essential-likely':  { label: 'Essential tremor pattern', color: '#e67e22' },
-  'physiological':     { label: 'Physiological tremor',     color: '#f39c12' },
-  'minimal':           { label: 'Minimal / No tremor',      color: '#27ae60' },
+type ProfileMeta = { label: string; color: string; icon: keyof typeof Ionicons.glyphMap };
+
+const PROFILE_LABELS: Record<string, ProfileMeta> = {
+  'parkinsons-likely': { label: "Parkinson's-like pattern", color: colors.danger, icon: 'warning' },
+  'essential-likely':  { label: 'Essential tremor pattern', color: colors.orange, icon: 'pulse' },
+  'physiological':     { label: 'Physiological tremor',     color: colors.warning, icon: 'information-circle' },
+  'minimal':           { label: 'Minimal / No tremor',      color: colors.success, icon: 'checkmark-circle' },
 };
-
-function MetricRow({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <View style={styles.metricRow}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <View style={styles.metricRight}>
-        <Text style={styles.metricValue}>{value}</Text>
-        {sub ? <Text style={styles.metricSub}>{sub}</Text> : null}
-      </View>
-    </View>
-  );
-}
-
-function Bar({ value, color }: { value: number; color: string }) {
-  return (
-    <View style={styles.barTrack}>
-      <View style={[styles.barFill, { width: `${Math.round(value * 100)}%`, backgroundColor: color }]} />
-    </View>
-  );
-}
 
 export default function ResultScreen({
   analysis,
@@ -54,11 +45,8 @@ export default function ResultScreen({
   const delta = previousSession ? analysis.score - previousSession.score : null;
   const showWarning = delta !== null && delta < -20;
   const profile = PROFILE_LABELS[analysis.tremorProfile];
-
-  const scoreColor =
-    analysis.score >= 80 ? '#27ae60' :
-    analysis.score >= 60 ? '#f39c12' :
-    analysis.score >= 40 ? '#e67e22' : '#e74c3c';
+  const sColor = scoreColor(analysis.score);
+  const pillRolling = analysis.phaseOffsetDeg >= 60 && analysis.phaseOffsetDeg <= 120;
 
   async function handleSave() {
     const session = await saveSession({
@@ -77,130 +65,233 @@ export default function ResultScreen({
       phaseOffsetDeg: analysis.phaseOffsetDeg,
       dominantAxis: analysis.dominantAxis,
       tremorProfile: analysis.tremorProfile,
+      spectralEntropy: analysis.spectralEntropy,
+      bandPowerRatio: analysis.bandPowerRatio,
+      frequencyJitterHz: analysis.frequencyJitterHz,
+      peakQFactor: analysis.peakQFactor,
     });
     onSave(session);
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      {/* Score */}
+    <Screen scroll contentStyle={styles.container}>
       <Text style={styles.scoreLabel}>Stability Score</Text>
-      <Text style={[styles.score, { color: scoreColor }]}>{analysis.score}</Text>
+
+      <ProgressRing
+        progress={analysis.score / 100}
+        label={`${analysis.score}`}
+        sublabel="out of 100"
+        size={180}
+        stroke={14}
+        color={sColor}
+        labelColor={sColor}
+        labelSize={64}
+      />
 
       {delta !== null && (
-        <Text style={[styles.delta, { color: delta >= 0 ? '#27ae60' : '#e74c3c' }]}>
-          {delta >= 0 ? '+' : ''}{delta} vs last session
-        </Text>
+        <View style={[styles.deltaPill, { backgroundColor: deltaColor(delta) + '1A' }]}>
+          <Ionicons
+            name={delta >= 0 ? 'arrow-up' : 'arrow-down'}
+            size={16}
+            color={deltaColor(delta)}
+          />
+          <Text style={[styles.delta, { color: deltaColor(delta) }]}>
+            {Math.abs(delta)} pts vs last session
+          </Text>
+        </View>
       )}
 
-      {/* Profile badge */}
-      <View style={[styles.profileBadge, { borderColor: profile.color }]}>
+      <View style={[styles.profileBadge, { backgroundColor: profile.color + '1A', borderColor: profile.color + '66' }]}>
+        <Ionicons name={profile.icon} size={20} color={profile.color} />
         <Text style={[styles.profileText, { color: profile.color }]}>{profile.label}</Text>
       </View>
 
-      {/* Basic metrics */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Signal</Text>
+      <Card style={styles.section}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="radio-outline" size={20} color={colors.primaryDark} />
+          <Text style={styles.cardTitle}>Signal</Text>
+        </View>
         <MetricRow
           label="Dominant Frequency"
           value={`${analysis.dominantFreqHz} Hz`}
-          sub={analysis.inParkinsonsRange ? '⚠ In Parkinson\'s range (4–6 Hz)' : 'Outside Parkinson\'s range'}
+          sub={analysis.inParkinsonsRange ? "In Parkinson's range (4–6 Hz)" : "Outside Parkinson's range"}
         />
         <MetricRow label="Dominant Axis" value={`${analysis.dominantAxis}-axis`} />
         <MetricRow label="Acc RMS" value={`${analysis.amplitudeRMS.toFixed(4)} g`} />
         <MetricRow label="Gyro RMS" value={`${analysis.gyroRMS.toFixed(3)} rad/s`} />
-      </View>
+      </Card>
 
-      {/* Advanced metrics */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Advanced Analysis</Text>
+      <Card style={styles.section}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="analytics-outline" size={20} color={colors.primaryDark} />
+          <Text style={styles.cardTitle}>Advanced Analysis</Text>
+        </View>
 
         <Text style={styles.metricLabel}>Regularity Index</Text>
-        <Text style={styles.metricHint}>High = very periodic (Parkinson's-like)</Text>
-        <Bar value={analysis.regularityIndex} color={analysis.regularityIndex > 0.7 ? '#e74c3c' : '#2e86c1'} />
-        <Text style={styles.barValue}>{analysis.regularityIndex.toFixed(2)}</Text>
+        <ProgressBar
+          value={analysis.regularityIndex}
+          color={analysis.regularityIndex > 0.7 ? colors.danger : colors.primary}
+          hint="High = very periodic (Parkinson's-like)"
+          displayValue={analysis.regularityIndex.toFixed(2)}
+        />
 
-        <Text style={[styles.metricLabel, { marginTop: 12 }]}>Harmonic Ratio</Text>
-        <Text style={styles.metricHint}>High = strong harmonics (Parkinson's-like)</Text>
-        <Bar value={Math.min(analysis.harmonicRatio / 3, 1)} color={analysis.harmonicRatio > 1.5 ? '#e74c3c' : '#2e86c1'} />
-        <Text style={styles.barValue}>{analysis.harmonicRatio.toFixed(2)}</Text>
+        <Text style={styles.metricLabel}>Harmonic Ratio</Text>
+        <ProgressBar
+          value={Math.min(analysis.harmonicRatio / 3, 1)}
+          color={analysis.harmonicRatio > 1.5 ? colors.danger : colors.primary}
+          hint="High = strong harmonics (Parkinson's-like)"
+          displayValue={analysis.harmonicRatio.toFixed(2)}
+        />
 
-        <Text style={[styles.metricLabel, { marginTop: 12 }]}>Tremor Intermittency</Text>
-        <Text style={styles.metricHint}>% of time tremor was active</Text>
-        <Bar value={analysis.intermittency} color={analysis.intermittency > 0.5 ? '#e67e22' : '#2e86c1'} />
-        <Text style={styles.barValue}>{Math.round(analysis.intermittency * 100)}%</Text>
+        <Text style={styles.metricLabel}>Tremor Intermittency</Text>
+        <ProgressBar
+          value={analysis.intermittency}
+          color={analysis.intermittency > 0.5 ? colors.orange : colors.primary}
+          hint="% of time tremor was active"
+          displayValue={`${Math.round(analysis.intermittency * 100)}%`}
+        />
 
         <MetricRow
           label="Cross-axis Phase Offset"
           value={`${analysis.phaseOffsetDeg}°`}
-          sub={analysis.phaseOffsetDeg >= 60 && analysis.phaseOffsetDeg <= 120 ? '⚠ Pill-rolling pattern' : 'No pill-rolling detected'}
+          sub={pillRolling ? 'Pill-rolling pattern' : 'No pill-rolling detected'}
         />
-      </View>
+      </Card>
+
+      <Card style={styles.section}>
+        <View style={styles.cardHeader}>
+          <Ionicons name="layers-outline" size={20} color={colors.primaryDark} />
+          <Text style={styles.cardTitle}>Deep Spectral Features</Text>
+        </View>
+
+        <Text style={styles.metricLabel}>Spectral Entropy</Text>
+        <ProgressBar
+          value={analysis.spectralEntropy}
+          color={analysis.spectralEntropy < 0.5 ? colors.danger : colors.primary}
+          hint="Low = pure tone (Parkinson's-like). High = noise."
+          displayValue={analysis.spectralEntropy.toFixed(2)}
+        />
+
+        <Text style={styles.metricLabel}>Tremor Band Power Ratio</Text>
+        <ProgressBar
+          value={analysis.bandPowerRatio}
+          color={analysis.bandPowerRatio > 0.4 ? colors.danger : colors.primary}
+          hint="% of energy in 4–6Hz Parkinson's band"
+          displayValue={`${Math.round(analysis.bandPowerRatio * 100)}%`}
+        />
+
+        <MetricRow
+          label="Frequency Jitter"
+          value={`${analysis.frequencyJitterHz.toFixed(2)} Hz`}
+          sub={analysis.frequencyJitterHz < 0.5 ? 'Stable freq (Parkinson\'s-like)' : 'Frequency drifts'}
+        />
+        <MetricRow
+          label="Peak Q-factor"
+          value={analysis.peakQFactor.toFixed(2)}
+          sub={analysis.peakQFactor > 5 ? 'Very sharp peak' : analysis.peakQFactor > 3 ? 'Moderate peak' : 'Broad peak'}
+        />
+      </Card>
 
       {showWarning && (
         <View style={styles.warningBox}>
+          <Ionicons name="warning" size={22} color={colors.danger} />
           <Text style={styles.warningText}>
             Score dropped significantly. Consider showing your doctor.
           </Text>
         </View>
       )}
 
-      <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
-        <Text style={styles.saveButtonText}>Save Session</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.discardButton} onPress={onDiscard}>
-        <Text style={styles.discardText}>Discard</Text>
-      </TouchableOpacity>
+      <Button title="Save Session" onPress={handleSave} style={styles.fullWidth} />
+      <Button title="Discard" variant="ghost" onPress={onDiscard} />
 
       <Text style={styles.disclaimer}>
         Symptom log only. Not a medical diagnosis.
       </Text>
-    </ScrollView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 24, backgroundColor: '#fff', alignItems: 'center', gap: 12 },
-  scoreLabel: { fontSize: 18, color: '#555', marginTop: 16 },
-  score: { fontSize: 88, fontWeight: 'bold', lineHeight: 96 },
-  delta: { fontSize: 18 },
+  container: {
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
+  scoreLabel: {
+    ...typography.caption,
+    fontSize: 18,
+    marginTop: spacing.lg,
+  },
+  deltaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.full,
+  },
+  delta: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
   profileBadge: {
-    borderWidth: 2,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1.5,
+    borderRadius: radii.full,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
   },
-  profileText: { fontSize: 16, fontWeight: '700' },
-  card: {
+  profileText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  section: {
     width: '100%',
-    backgroundColor: '#f8f9fa',
-    borderRadius: 14,
-    padding: 16,
-    gap: 6,
+    gap: spacing.sm,
   },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: '#1a5276', marginBottom: 4 },
-  metricRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingVertical: 4 },
-  metricLabel: { fontSize: 15, color: '#444', flex: 1 },
-  metricRight: { alignItems: 'flex-end', flex: 1 },
-  metricValue: { fontSize: 15, fontWeight: '600', color: '#222' },
-  metricSub: { fontSize: 12, color: '#888', textAlign: 'right' },
-  metricHint: { fontSize: 12, color: '#888', marginBottom: 4 },
-  barTrack: { width: '100%', height: 10, backgroundColor: '#e0e0e0', borderRadius: 5, overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: 5 },
-  barValue: { fontSize: 13, color: '#555', marginTop: 2 },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  cardTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.primaryDark,
+  },
+  metricLabel: {
+    fontSize: 16,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    fontWeight: '500',
+  },
   warningBox: {
-    backgroundColor: '#fdf2f2', borderColor: '#e74c3c', borderWidth: 1,
-    borderRadius: 12, padding: 16, width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.warningBg,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.danger,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+    width: '100%',
   },
-  warningText: { fontSize: 16, color: '#e74c3c', textAlign: 'center' },
-  saveButton: {
-    backgroundColor: '#2e86c1', padding: 18, borderRadius: 12,
-    width: '100%', alignItems: 'center', minHeight: 60,
+  warningText: {
+    flex: 1,
+    fontSize: 16,
+    color: colors.danger,
+    lineHeight: 22,
   },
-  saveButtonText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  discardButton: { padding: 14, minHeight: 48, alignItems: 'center' },
-  discardText: { fontSize: 16, color: '#888' },
-  disclaimer: { fontSize: 12, color: '#aaa', textAlign: 'center', paddingBottom: 16 },
+  fullWidth: {
+    width: '100%',
+  },
+  disclaimer: {
+    fontSize: 14,
+    color: colors.textDisabled,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
 });

@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { setOnboardingComplete } from '../services/storage';
+import Screen from '../components/ui/Screen';
+import Button from '../components/ui/Button';
+import Card from '../components/ui/Card';
+import StepDots from '../components/ui/StepDots';
+import { colors, spacing, radii, typography } from '../theme/tokens';
 
 interface Props {
   onComplete: () => void;
@@ -10,14 +16,17 @@ const STEPS = [
   {
     title: 'What is tremor?',
     body: 'Tremor is an involuntary shaking of a body part. This app helps you track hand tremor over time so you can share meaningful data with your doctor.',
+    icon: 'information-circle-outline' as const,
   },
   {
     title: 'How to hold your phone',
     body: 'Hold your phone flat on your palm with your right or left hand. Slightly bend your elbow. Sit down and rest your elbow on an armrest if possible. Stay relaxed.',
+    icon: 'hand-left-outline' as const,
   },
   {
     title: 'What your score means',
     body: '80–100: Very stable\n60–79: Some tremor detected\n40–59: Moderate tremor — track closely\n0–39: Significant tremor — show your doctor',
+    icon: 'stats-chart-outline' as const,
   },
 ];
 
@@ -36,54 +45,58 @@ export default function OnboardingScreen({ onComplete }: Props) {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.stepIndicator}>
-        {step + 1} / {STEPS.length}
-      </Text>
+    <Screen centered contentStyle={styles.screen}>
+      <StepDots total={STEPS.length} current={step} />
+
+      <View style={styles.iconBadge}>
+        <Ionicons name={current.icon} size={48} color={colors.primary} />
+      </View>
+
       <Text style={styles.title}>{current.title}</Text>
-      <Text style={styles.body}>{current.body}</Text>
-      <TouchableOpacity style={styles.button} onPress={handleNext}>
-        <Text style={styles.buttonText}>{isLast ? 'Get Started' : 'Next'}</Text>
-      </TouchableOpacity>
-    </View>
+
+      <Card style={styles.card}>
+        <Text style={styles.body}>{current.body}</Text>
+      </Card>
+
+      <Button
+        title={isLast ? 'Get Started' : 'Next'}
+        onPress={handleNext}
+        style={styles.button}
+      />
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 32,
+  screen: {
     justifyContent: 'center',
-    backgroundColor: '#fff',
   },
-  stepIndicator: {
-    fontSize: 16,
-    color: '#888',
-    marginBottom: 16,
+  iconBadge: {
+    width: 96,
+    height: 96,
+    borderRadius: radii.full,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: spacing.xl,
+    borderWidth: 2,
+    borderColor: colors.primaryMuted,
   },
   title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1a5276',
-    marginBottom: 24,
+    ...typography.heading,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+  },
+  card: {
+    width: '100%',
+    marginBottom: spacing.xxl,
   },
   body: {
-    fontSize: 20,
-    lineHeight: 32,
-    color: '#333',
-    marginBottom: 48,
+    ...typography.body,
+    fontSize: 18,
   },
   button: {
-    backgroundColor: '#2e86c1',
-    padding: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-    minHeight: 64,
-    justifyContent: 'center',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
+    width: '100%',
   },
 });

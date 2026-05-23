@@ -1,6 +1,7 @@
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { TremorSession } from '../types/session';
+import { pdfColors } from '../theme/tokens';
 
 function buildReportHTML(sessions: TremorSession[], patientName: string): string {
   const sorted = [...sessions].sort((a, b) => a.timestamp - b.timestamp);
@@ -34,14 +35,14 @@ function buildReportHTML(sessions: TremorSession[], patientName: string): string
 <head>
   <meta charset="utf-8" />
   <style>
-    body { font-family: Arial, sans-serif; padding: 32px; color: #222; }
-    h1 { color: #1a5276; }
-    h2 { color: #2e86c1; margin-top: 32px; }
-    .summary { background: #eaf4fb; border-radius: 8px; padding: 16px; margin: 16px 0; }
+    body { font-family: Arial, sans-serif; padding: 32px; color: ${pdfColors.text}; }
+    h1 { color: ${pdfColors.primaryDark}; }
+    h2 { color: ${pdfColors.primary}; margin-top: 32px; }
+    .summary { background: ${pdfColors.primaryMuted}; border-radius: 8px; padding: 16px; margin: 16px 0; }
     table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-    th { background: #2e86c1; color: white; padding: 8px; text-align: left; }
-    td { padding: 8px; border-bottom: 1px solid #ddd; }
-    .footer { margin-top: 48px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 16px; }
+    th { background: ${pdfColors.primary}; color: white; padding: 8px; text-align: left; }
+    td { padding: 8px; border-bottom: 1px solid ${pdfColors.border}; }
+    .footer { margin-top: 48px; font-size: 12px; color: ${pdfColors.textHint}; border-top: 1px solid ${pdfColors.border}; padding-top: 16px; }
   </style>
 </head>
 <body>

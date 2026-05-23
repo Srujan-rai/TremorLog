@@ -19,6 +19,10 @@ export interface TremorSession {
   phaseOffsetDeg: number;
   dominantAxis: 'X' | 'Y' | 'Z';
   tremorProfile: TremorProfile;
+  spectralEntropy: number;
+  bandPowerRatio: number;
+  frequencyJitterHz: number;
+  peakQFactor: number;
 }
 
 export interface CalibrationBaseline {
